@@ -290,11 +290,16 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);
     </div>
   </div>
 
-  <!-- ⑥ 최근 20회차 미니 패턴 -->
+  <!-- ⑥ 역대 최다 출현 패턴 TOP3 -->
   <div class="card">
-    <div class="card-title"><span>📊</span>최근 20회차 번호 & 미니 패턴</div>
-    <div id="historyArea">
-      <div class="loading-box"><div class="spinner"></div><p>로딩 중...</p></div>
+    <div class="card-title"><span>👑</span>역대 최다 출현 패턴 TOP 3 <span style="font-size:10px;color:var(--muted);font-weight:700;letter-spacing:1px;margin-left:6px;">매주 자동 업데이트</span></div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:14px;line-height:1.7;">
+      1회부터 현재 회차까지 전체 당첨번호의 <b style="color:var(--text);">격자 패턴 유형</b>을 분석해
+      가장 많이 반복된 패턴 TOP 3를 추출합니다.<br>
+      패턴 분류 기준: <b style="color:var(--gold);">구간 분포(상/중하)</b> + <b style="color:var(--gold);">홀짝 비율</b> + <b style="color:var(--gold);">합계 구간</b> + <b style="color:var(--gold);">AC값</b>
+    </div>
+    <div id="topPatternArea">
+      <div class="loading-box"><div class="spinner"></div><p>전체 패턴 분석 중...</p></div>
     </div>
   </div>
 
@@ -762,31 +767,137 @@ function buildTop5(){
 }
 
 // ═══════════════════════════════════════════════════════════════
-// ⑤ 최근 20회차 히스토리
+// ⑥ 역대 최다 출현 패턴 TOP3
 // ═══════════════════════════════════════════════════════════════
-function renderHistory(){
-  const el=document.getElementById("historyArea");
-  const recent=DB.slice(0,20);
-  let html=`<div class="round-history">`;
-  recent.forEach(d=>{
-    const sorted=[...d.numbers].sort((a,b)=>a-b);
+
+// 패턴 시그니처: 구간분포 + 홀짝비율 + 합계구간 + AC값구간
+function calcAC(nums){
+  const s=[...nums].sort((a,b)=>a-b);
+  const d=new Set();
+  for(let i=0;i<s.length;i++) for(let j=i+1;j<s.length;j++) d.add(s[j]-s[i]);
+  return d.size-5;
+}
+function getPatternSig(nums){
+  const s=[...nums].sort((a,b)=>a-b);
+  const sum=s.reduce((a,b)=>a+b,0);
+  const odd=s.filter(n=>n%2).length;
+  const low=s.filter(n=>n<=15).length;
+  const mid=s.filter(n=>n>=16&&n<=30).length;
+  const high=s.filter(n=>n>=31).length;
+  const ac=calcAC(s);
+  const sumGrp=sum<100?"S":sum<130?"M":sum<160?"H":"VH";
+  const acGrp=ac<=4?"Lo":ac<=7?"Mid":"Hi";
+  return `L${low}M${mid}H${high}_O${odd}_${sumGrp}_AC${acGrp}`;
+}
+
+// 패턴 시그니처를 읽기 쉬운 설명으로
+function sigToDesc(sig){
+  const m=sig.match(/L(\d)M(\d)H(\d)_O(\d)_([A-Z]+)_AC([A-Za-z]+)/);
+  if(!m) return sig;
+  const[,l,mi,h,odd,sumG,acG]=m;
+  const even=6-Number(odd);
+  const sumTxt=sumG==="S"?"합계 낮음(~99)":sumG==="M"?"합계 보통(100~129)":sumG==="H"?"합계 높음(130~159)":"합계 매우높음(160+)";
+  const acTxt=acG==="Lo"?"AC 낮음(~4)":acG==="Mid"?"AC 보통(5~7)":"AC 높음(8+)";
+  return `1~15구간 ${l}개 · 16~30구간 ${mi}개 · 31~45구간 ${h}개
+홀수 ${odd}개 · 짝수 ${even}개 / ${sumTxt} / ${acTxt}`;
+}
+
+function renderTopPatterns(){
+  const el=document.getElementById("topPatternArea");
+  if(!DB.length){ el.innerHTML=`<div class="err-box">데이터 없음</div>`; return; }
+
+  // 전체 회차 패턴 시그니처 집계
+  const sigMap={};
+  DB.forEach(d=>{
+    const sig=getPatternSig(d.numbers);
+    if(!sigMap[sig]) sigMap[sig]={count:0,rounds:[],exNums:null,exDate:null};
+    sigMap[sig].count++;
+    sigMap[sig].rounds.push(d.round);
+    if(!sigMap[sig].exNums){ sigMap[sig].exNums=d.numbers; sigMap[sig].exDate=d.date; sigMap[sig].exRound=d.round; }
+  });
+
+  // 최다 출현 순 정렬
+  const sorted=Object.entries(sigMap).sort((a,b)=>b[1].count-a[1].count);
+  const top3=sorted.slice(0,3);
+  const total=DB.length;
+  const rankInfo=[
+    {emoji:"🥇",cls:"r1-rank",cbcls:"cb-gold",border:"rgba(255,215,0,.3)",color:"var(--gold)"},
+    {emoji:"🥈",cls:"r2-rank",cbcls:"cb-silver",border:"rgba(192,192,192,.3)",color:"#c0c0c0"},
+    {emoji:"🥉",cls:"r3-rank",cbcls:"cb-bronze",border:"rgba(205,127,50,.3)",color:"#cd7f32"},
+  ];
+
+  let html=`<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;">`;
+  top3.forEach(([sig,data],i)=>{
+    const info=rankInfo[i];
+    const pct=(data.count/total*100).toFixed(1);
+    const exSorted=[...data.exNums].sort((a,b)=>a-b);
+    const desc=sigToDesc(sig);
+    const recentRounds=data.rounds.slice(0,5).join(", ");
+
     html+=`
-    <div class="rh-row">
-      <div class="rh-info">
-        <div class="rh-round">${d.round}회</div>
-        <div class="rh-date">${d.date}</div>
+    <div class="predict-card" style="border-color:${info.border};padding-top:22px;">
+      <div class="pc-rank ${info.cls}">${info.emoji} ${i+1}위</div>
+      <div style="text-align:center;margin-bottom:10px;">
+        <div style="font-size:28px;font-weight:900;color:${info.color};">${data.count}회</div>
+        <div style="font-size:11px;color:var(--muted);">전체 ${total}회차 중 ${pct}%</div>
       </div>
-      <div class="rh-balls">${bHTML(sorted,"ball-sm")}</div>
-      <div style="flex-shrink:0;width:120px;">
-        <div class="mini-grid-wrap" style="padding:6px;">
-          ${buildMiniGrid(sorted,"h"+d.round)}
-        </div>
+      <div class="confidence-bar" style="margin-bottom:12px;">
+        <div class="${info.cbcls} cb-fill" style="width:${Math.min(100,pct*3)}%;"></div>
+      </div>
+      <div style="background:var(--bg2);border-radius:10px;padding:10px;margin-bottom:10px;">
+        <div style="font-size:9px;font-weight:900;color:var(--muted);letter-spacing:1px;margin-bottom:6px;">패턴 특징</div>
+        <div style="font-size:11px;color:var(--text);line-height:1.9;white-space:pre-line;">${desc}</div>
+      </div>
+      <div style="margin-bottom:10px;">
+        <div style="font-size:9px;font-weight:900;color:var(--muted);letter-spacing:1px;margin-bottom:6px;">대표 예시 (${data.exRound}회 · ${data.exDate})</div>
+        <div class="balls-row" style="justify-content:center;">${bHTML(exSorted,"ball-sm")}</div>
+      </div>
+      <div style="margin-bottom:10px;">
+        <div style="font-size:9px;font-weight:900;color:var(--muted);letter-spacing:1px;margin-bottom:5px;">미니 패턴</div>
+        <div class="mini-grid-wrap" style="padding:6px;">${buildMiniGrid(exSorted,"tp"+i)}</div>
+      </div>
+      <div style="font-size:10px;color:var(--muted);line-height:1.6;">
+        최근 출현 회차:<br>
+        <b style="color:var(--sub);">${recentRounds}${data.rounds.length>5?" 외 "+( data.rounds.length-5)+"회":""}회</b>
       </div>
     </div>`;
   });
   html+=`</div>`;
+
+  // 패턴 분포 요약 바
+  html+=`<div style="margin-top:18px;background:var(--bg3);border:1px solid var(--line);border-radius:14px;padding:14px;">
+    <div style="font-size:11px;font-weight:900;color:var(--gold);margin-bottom:10px;letter-spacing:1px;">
+      📊 전체 패턴 유형 분포 (상위 10개)
+    </div>
+    <div style="display:grid;gap:6px;">
+      ${sorted.slice(0,10).map(([sig,data],i)=>{
+        const pct=(data.count/total*100).toFixed(1);
+        const d=sigToDesc(sig).split("
+")[0];
+        return `
+        <div style="display:flex;align-items:center;gap:10px;">
+          <div style="width:24px;font-size:11px;font-weight:900;color:var(--muted);flex-shrink:0;">${i+1}</div>
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:10px;color:var(--text);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${d}</div>
+            <div style="height:4px;border-radius:2px;background:var(--line);margin-top:3px;overflow:hidden;">
+              <div style="height:100%;width:${Math.min(100,pct*3)}%;background:${i===0?"linear-gradient(90deg,var(--gold2),var(--gold))":i===1?"linear-gradient(90deg,#999,#ddd)":i===2?"linear-gradient(90deg,#cd7f32,#e8a87c)":"linear-gradient(90deg,var(--blue),#82b1ff)"};border-radius:2px;"></div>
+            </div>
+          </div>
+          <div style="font-size:11px;font-weight:900;color:var(--sub);flex-shrink:0;">${data.count}회 (${pct}%)</div>
+        </div>`;
+      }).join("")}
+    </div>
+  </div>
+  <div style="margin-top:10px;font-size:10px;color:var(--muted);line-height:1.8;">
+    📌 분석 기반: 1회~${DB[0].round}회 총 ${total}회차 전체 패턴 분류<br>
+    💡 이 패턴이 다음 회차에도 반복될 가능성이 통계적으로 높습니다.
+  </div>`;
+
   el.innerHTML=html;
-  setTimeout(()=>recent.forEach(d=>drawSVG("h"+d.round,[...d.numbers].sort((a,b)=>a-b))),300);
+  setTimeout(()=>top3.forEach(([,data],i)=>{
+    const exSorted=[...data.exNums].sort((a,b)=>a-b);
+    drawSVG("tp"+i,exSorted);
+  }),200);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -806,8 +917,8 @@ async function init(){
     `<div class="loading-box"><div class="spinner"></div><p>분석 중...</p></div>`;
   document.getElementById("predictArea").innerHTML=
     `<div class="loading-box"><div class="spinner"></div><p>패턴 학습 중...</p></div>`;
-  document.getElementById("historyArea").innerHTML=
-    `<div class="loading-box"><div class="spinner"></div><p>로딩 중...</p></div>`;
+  document.getElementById("topPatternArea").innerHTML=
+    `<div class="loading-box"><div class="spinner"></div><p>전체 패턴 분석 중...</p></div>`;
 
   try{
     await loadData();
@@ -817,7 +928,7 @@ async function init(){
     renderSkip(curSkip);
     renderHeatmap();
     buildTop5();
-    renderHistory();
+    renderTopPatterns();
   }catch(err){
     setStatus("err","데이터 로드 실패");
     document.getElementById("latestCard").innerHTML=
